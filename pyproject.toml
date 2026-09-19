@@ -1,0 +1,38 @@
+[project]
+name = "contract-compliance-auditor"
+version = "0.1.0"
+description = "Automated contract compliance evaluation engine against enterprise procurement standards"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "google-genai>=2.20.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.6.0",
+    "pyyaml>=6.0.1",
+    "jinja2>=3.1.3",
+    "python-docx>=1.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-mock>=3.12.0",
+    "ruff>=0.3.0",
+    "mypy>=1.9.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
