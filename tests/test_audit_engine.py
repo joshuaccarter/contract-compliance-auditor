@@ -1,15 +1,14 @@
 """Automated unit and integration test suite for the contract compliance engine."""
 
 import json
-from pathlib import Path
-from unittest.mock import MagicMock
-import pytest
 import os
+from pathlib import Path
+
+import pytest
 
 from src.audit.engine import ContractAuditor
-from src.audit.schemas import ComplianceStatus, ContractAuditReport, RiskCriticality
+from src.audit.schemas import ComplianceStatus, RiskCriticality
 from src.formatting.reporter import render_compliance_markdown
-
 
 # Ground-truth synthetic contract representing 7 evaluated items and 3 omitted (silent) items
 SYNTHETIC_CONTRACT_TEXT = """
@@ -215,7 +214,6 @@ def test_mocked_contract_audit_pipeline(mocker, tmp_path):
     assert "⚠️ DEVIATION" in markdown_content
     assert "❌ SILENT" in markdown_content
 
-import os
 
 
 @pytest.mark.skipif(

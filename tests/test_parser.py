@@ -1,7 +1,9 @@
 """Unit tests for the contract document parser."""
 
 from pathlib import Path
+
 import pytest
+
 from src.parsing.document_parser import DocumentParser, ParsedContract
 
 

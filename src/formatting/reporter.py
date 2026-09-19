@@ -1,15 +1,16 @@
 """Reporting module to format and persist contract compliance audit results."""
 
 from pathlib import Path
-from typing import Union
+
 from docx import Document
-from docx.shared import Inches, Pt, RGBColor
+from docx.shared import Pt, RGBColor
+
 from src.audit.schemas import ComplianceStatus, ContractAuditReport
 
 
 def render_compliance_markdown(
     report: ContractAuditReport,
-    output_path: Union[str, Path],
+    output_path: str | Path,
 ) -> Path:
     """Renders a ContractAuditReport into a formatted Markdown intake sheet."""
     dest = Path(output_path)
@@ -84,7 +85,7 @@ def render_compliance_markdown(
 
 def render_compliance_docx(
     report: ContractAuditReport,
-    output_path: Union[str, Path],
+    output_path: str | Path,
 ) -> Path:
     """Renders a ContractAuditReport into a formatted Microsoft Word document."""
     dest = Path(output_path)
@@ -97,11 +98,11 @@ def render_compliance_docx(
     title.runs[0].font.size = Pt(18)
 
     meta_p = doc.add_paragraph()
-    meta_p.add_run(f"Contract: ").bold = True
+    meta_p.add_run("Contract: ").bold = True
     meta_p.add_run(f"{report.contract_title}\n")
-    meta_p.add_run(f"Vendor: ").bold = True
+    meta_p.add_run("Vendor: ").bold = True
     meta_p.add_run(f"{report.vendor_name}\n")
-    meta_p.add_run(f"Overall Risk Assessment: ").bold = True
+    meta_p.add_run("Overall Risk Assessment: ").bold = True
     risk_run = meta_p.add_run(f"{report.overall_risk_rating.value}")
     risk_run.bold = True
     if report.overall_risk_rating.value in ("HIGH", "CRITICAL"):

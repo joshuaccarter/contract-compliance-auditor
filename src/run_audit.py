@@ -3,6 +3,7 @@
 import argparse
 import csv
 from pathlib import Path
+
 from src.audit.engine import ContractAuditor
 from src.formatting.reporter import render_compliance_docx, render_compliance_markdown
 from src.parsing.document_parser import DocumentParser
@@ -62,7 +63,6 @@ def main():
     if not contract_path.exists():
         raise FileNotFoundError(f"Contract not found: {contract_path}")
 
-    from src.parsing.document_parser import DocumentParser
 
     print(f"\n[1/4] Ingesting & normalizing contract: {contract_path.name}...")
     parser = DocumentParser()

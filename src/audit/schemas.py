@@ -1,7 +1,7 @@
 """Data validation and serialization schemas for contract compliance evaluation."""
 
 from enum import Enum
-from typing import List, Optional
+
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -49,7 +49,7 @@ class ItemAuditResult(BaseModel):
         ...,
         description="Section reference and direct quote from contract, or 'Not Found / Silent'",
     )
-    deviation_analysis: Optional[str] = Field(
+    deviation_analysis: str | None = Field(
         default=None,
         description="Analysis of legal/financial exposure if status is DEVIATION or SILENT",
     )
@@ -87,7 +87,7 @@ class ContractAuditReport(BaseModel):
         ...,
         description="Composite contract risk assessment",
     )
-    results: List[ItemAuditResult] = Field(
+    results: list[ItemAuditResult] = Field(
         ...,
         description="Collection of individual item audit evaluations",
     )

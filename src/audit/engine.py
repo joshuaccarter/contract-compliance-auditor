@@ -3,11 +3,11 @@
 import json
 import os
 from pathlib import Path
-from typing import Optional,Union
+
+import yaml
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-import yaml
 
 from src.audit.schemas import ContractAuditReport
 
@@ -20,8 +20,8 @@ class ContractAuditor:
 
     def __init__(
             self,
-            rubric_path: Union[str, Path] = "config/audit_rubric.yaml",
-            model_name: Optional[str] = None,
+            rubric_path: str | Path = "config/audit_rubric.yaml",
+            model_name: str | None = None,
         ):
             """Initialize the auditor with a declarative rubric and Gemini client."""
             rubric_file = Path(rubric_path)

@@ -1,9 +1,10 @@
 """Layout-aware contract document parser supporting Markdown, DOCX, and PDF formats."""
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-import re
-from typing import List, Optional, Union
+from typing import ClassVar
+
 from docx import Document
 
 
@@ -14,14 +15,14 @@ class ParsedContract:
     raw_text: str
     file_name: str
     file_type: str
-    detected_sections: List[str]
+    detected_sections: list[str]
     estimated_tokens: int
 
 
 class DocumentParser:
     """Normalizes contracts from various document formats into clean text for LLM ingestion."""
 
-    SUPPORTED_EXTENSIONS = {".md", ".txt", ".docx"}
+    SUPPORTED_EXTENSIONS: ClassVar[set[str]] = {".md", ".txt", ".docx"}
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
@@ -30,7 +31,7 @@ class DocumentParser:
         return int(words * 1.33)
 
     @staticmethod
-    def _extract_sections(text: str) -> List[str]:
+    def _extract_sections(text: str) -> list[str]:
         """Identifies major section headings across standard contractual conventions."""
         # Matches patterns like '## Section 1', 'Section 1:', 'ARTICLE 3', or '3.1 Invoicing'
         section_pattern = re.compile(
@@ -43,7 +44,7 @@ class DocumentParser:
     def _parse_docx(self, path: Path) -> str:
         """Extracts text and tabular content from Microsoft Word documents."""
         doc = Document(path)
-        blocks: List[str] = []
+        blocks: list[str] = []
 
         for p in doc.paragraphs:
             text = p.text.strip()
@@ -55,7 +56,7 @@ class DocumentParser:
                     blocks.append(text)
 
         for table in doc.tables:
-            table_lines: List[str] = []
+            table_lines: list[str] = []
             for row in table.rows:
                 row_cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
                 table_lines.append("| " + " | ".join(row_cells) + " |")
@@ -64,7 +65,7 @@ class DocumentParser:
 
         return "\n\n".join(blocks)
 
-    def parse(self, file_path: Union[str, Path]) -> ParsedContract:
+    def parse(self, file_path: str | Path) -> ParsedContract:
         """Parses a contract file into a normalized ParsedContract object.
 
         Args:
