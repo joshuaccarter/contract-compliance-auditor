@@ -24,7 +24,9 @@ def _make_dummy_item(
         policy_standard="Standard specification",
         identified_contract_term="Contract term text",
         exact_citation="Section 1.1 ('test quote')",
-        deviation_analysis=None if status == ComplianceStatus.MET else "Risk exposure note",
+        deviation_analysis=None
+        if status == ComplianceStatus.MET
+        else "Risk exposure note",
     )
 
 
@@ -35,11 +37,15 @@ def test_schema_forbids_examples_in_json_schema():
 
     # Verify top-level properties do not contain 'examples'
     for prop_name, prop_data in report_schema.get("properties", {}).items():
-        assert "examples" not in prop_data, f"ContractAuditReport property '{prop_name}' contains forbidden 'examples' key"
+        assert "examples" not in prop_data, (
+            f"ContractAuditReport property '{prop_name}' contains forbidden 'examples' key"
+        )
 
     # Verify ItemAuditResult properties do not contain 'examples'
     for prop_name, prop_data in item_schema.get("properties", {}).items():
-        assert "examples" not in prop_data, f"ItemAuditResult property '{prop_name}' contains forbidden 'examples' key"
+        assert "examples" not in prop_data, (
+            f"ItemAuditResult property '{prop_name}' contains forbidden 'examples' key"
+        )
 
 
 def test_audit_report_auto_computes_counts():
@@ -53,7 +59,9 @@ def test_audit_report_auto_computes_counts():
         _make_dummy_item("REQ-06", ComplianceStatus.DEVIATION),
         _make_dummy_item("REQ-07", ComplianceStatus.DEVIATION),
         _make_dummy_item("REQ-08", ComplianceStatus.SILENT),
-        _make_dummy_item("REQ-09", ComplianceStatus.MET, name="Limitation of Liability Cap"),
+        _make_dummy_item(
+            "REQ-09", ComplianceStatus.MET, name="Limitation of Liability Cap"
+        ),
         _make_dummy_item("REQ-10", ComplianceStatus.MET, name="Governing Law"),
     ]
 

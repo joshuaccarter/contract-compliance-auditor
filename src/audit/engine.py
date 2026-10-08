@@ -19,37 +19,37 @@ class ContractAuditor:
     """Orchestrates structured compliance audits using Gemini."""
 
     def __init__(
-            self,
-            rubric_path: str | Path = "config/audit_rubric.yaml",
-            model_name: str | None = None,
-        ):
-            """Initialize the auditor with a declarative rubric and Gemini client."""
-            rubric_file = Path(rubric_path)
-            if not rubric_file.exists():
-                raise FileNotFoundError(f"Rubric configuration not found at: {rubric_file}")
+        self,
+        rubric_path: str | Path = "config/audit_rubric.yaml",
+        model_name: str | None = None,
+    ):
+        """Initialize the auditor with a declarative rubric and Gemini client."""
+        rubric_file = Path(rubric_path)
+        if not rubric_file.exists():
+            raise FileNotFoundError(f"Rubric configuration not found at: {rubric_file}")
 
-            with open(rubric_file, "r", encoding="utf-8") as f:
-                config_data = yaml.safe_load(f)
+        with open(rubric_file, "r", encoding="utf-8") as f:
+            config_data = yaml.safe_load(f)
 
-            self.rubric = config_data["rubric"]
-            engine_cfg = config_data.get("engine", {})
+        self.rubric = config_data["rubric"]
+        engine_cfg = config_data.get("engine", {})
 
-            # Resolution hierarchy: explicit argument -> env var -> config file -> fallback
-            self.model_name = (
-                model_name
-                or os.environ.get("GEMINI_MODEL")
-                or engine_cfg.get("model_name", "gemini-flash-latest")
+        # Resolution hierarchy: explicit argument -> env var -> config file -> fallback
+        self.model_name = (
+            model_name
+            or os.environ.get("GEMINI_MODEL")
+            or engine_cfg.get("model_name", "gemini-flash-latest")
+        )
+        self.temperature = float(engine_cfg.get("temperature", 0.0))
+
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "GEMINI_API_KEY not found in environment or .env file. "
+                "Please configure GEMINI_API_KEY before executing inference."
             )
-            self.temperature = float(engine_cfg.get("temperature", 0.0))
 
-            api_key = os.environ.get("GEMINI_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "GEMINI_API_KEY not found in environment or .env file. "
-                    "Please configure GEMINI_API_KEY before executing inference."
-                )
-
-            self.client = genai.Client(api_key=api_key)
+        self.client = genai.Client(api_key=api_key)
 
     def _build_system_instruction(self) -> str:
         """Construct the compliance persona and evaluation guardrails."""

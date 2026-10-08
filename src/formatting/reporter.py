@@ -21,7 +21,9 @@ def render_compliance_markdown(
         badge = (
             "✅ MET"
             if r.status == ComplianceStatus.MET
-            else ("⚠️ DEVIATION" if r.status == ComplianceStatus.DEVIATION else "❌ SILENT")
+            else (
+                "⚠️ DEVIATION" if r.status == ComplianceStatus.DEVIATION else "❌ SILENT"
+            )
         )
         cleaned_term = r.identified_contract_term.replace("|", "/")
         cleaned_cite = r.exact_citation.replace("|", "/")
@@ -64,11 +66,17 @@ def render_compliance_markdown(
 """
 
     deviations = [
-        r for r in report.results if r.status in (ComplianceStatus.DEVIATION, ComplianceStatus.SILENT)
+        r
+        for r in report.results
+        if r.status in (ComplianceStatus.DEVIATION, ComplianceStatus.SILENT)
     ]
     if deviations:
         for d in deviations:
-            status_text = "Policy Deviation" if d.status == ComplianceStatus.DEVIATION else "Clause Missing (Silent)"
+            status_text = (
+                "Policy Deviation"
+                if d.status == ComplianceStatus.DEVIATION
+                else "Clause Missing (Silent)"
+            )
             content += f"\n* **[{d.item_id}] {d.item_name}** ({status_text}):\n"
             content += f"  * *Contract Term:* {d.identified_contract_term}\n"
             content += f"  * *Required Standard:* {d.policy_standard}\n"
@@ -119,9 +127,21 @@ def render_compliance_docx(
 
     stats = [
         ("Total Checklist Items", str(report.total_items_audited), "100%"),
-        ("Fully Compliant (MET)", str(report.compliant_count), f"{(report.compliant_count / report.total_items_audited):.1%}"),
-        ("Policy Deviations (DEVIATION)", str(report.deviation_count), f"{(report.deviation_count / report.total_items_audited):.1%}"),
-        ("Missing / Unaddressed (SILENT)", str(report.silent_count), f"{(report.silent_count / report.total_items_audited):.1%}"),
+        (
+            "Fully Compliant (MET)",
+            str(report.compliant_count),
+            f"{(report.compliant_count / report.total_items_audited):.1%}",
+        ),
+        (
+            "Policy Deviations (DEVIATION)",
+            str(report.deviation_count),
+            f"{(report.deviation_count / report.total_items_audited):.1%}",
+        ),
+        (
+            "Missing / Unaddressed (SILENT)",
+            str(report.silent_count),
+            f"{(report.silent_count / report.total_items_audited):.1%}",
+        ),
     ]
     for metric, count, pct in stats:
         row = summary_table.add_row().cells
@@ -149,18 +169,28 @@ def render_compliance_docx(
     # Exposure Items
     doc.add_heading("Actionable Findings & Deviations", level=2)
     deviations = [
-        r for r in report.results if r.status in (ComplianceStatus.DEVIATION, ComplianceStatus.SILENT)
+        r
+        for r in report.results
+        if r.status in (ComplianceStatus.DEVIATION, ComplianceStatus.SILENT)
     ]
     if deviations:
         for d in deviations:
-            tag = "Deviation" if d.status == ComplianceStatus.DEVIATION else "Missing / Silent"
+            tag = (
+                "Deviation"
+                if d.status == ComplianceStatus.DEVIATION
+                else "Missing / Silent"
+            )
             p = doc.add_paragraph(style="List Bullet")
             p.add_run(f"[{d.item_id}] {d.item_name} ({tag}): ").bold = True
-            p.add_run(f"Required: {d.policy_standard}. Found: {d.identified_contract_term}. ")
+            p.add_run(
+                f"Required: {d.policy_standard}. Found: {d.identified_contract_term}. "
+            )
             if d.deviation_analysis:
                 p.add_run(f"Exposure: {d.deviation_analysis}")
     else:
-        doc.add_paragraph("No critical deviations found. Terms align with standard policy.")
+        doc.add_paragraph(
+            "No critical deviations found. Terms align with standard policy."
+        )
 
     doc.save(dest)
     return dest

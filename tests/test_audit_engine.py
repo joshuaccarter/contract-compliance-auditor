@@ -148,12 +148,13 @@ def test_rubric_config_contract():
     auditor.temperature = 0.0
     with open("config/audit_rubric.yaml", "r", encoding="utf-8") as f:
         import yaml
+
         config = yaml.safe_load(f)
 
     assert "rubric" in config
     assert "engine" in config
     assert len(config["rubric"]) == 10
-    
+
     # Assert critical columns exist on every rubric item
     for item in config["rubric"]:
         assert "id" in item
@@ -190,7 +191,7 @@ def test_mocked_contract_audit_pipeline(mocker, tmp_path):
 
     # 5. Assert specific compliance findings
     results_map = {r.item_id: r for r in report.results}
-    
+
     # REQ-01: SLA (MET)
     assert results_map["REQ-01"].status == ComplianceStatus.MET
     assert "Section 8.1" in results_map["REQ-01"].exact_citation
@@ -213,7 +214,6 @@ def test_mocked_contract_audit_pipeline(mocker, tmp_path):
     assert "✅ MET" in markdown_content
     assert "⚠️ DEVIATION" in markdown_content
     assert "❌ SILENT" in markdown_content
-
 
 
 @pytest.mark.skipif(
@@ -240,9 +240,7 @@ def test_live_gemini_contract_audit(tmp_path):
 
     # 1. Structural integrity checks
     assert report.total_items_audited == 10
-    assert (
-        report.compliant_count + report.deviation_count + report.silent_count == 10
-    )
+    assert report.compliant_count + report.deviation_count + report.silent_count == 10
     assert len(report.results) == 10
 
     # 2. Absence verification (REQ-04: Termination for Convenience should be SILENT)

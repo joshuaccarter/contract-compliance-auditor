@@ -41,7 +41,9 @@ def append_scorecard_csv(report, csv_path: Path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Contract Compliance Evaluation Runner")
+    parser = argparse.ArgumentParser(
+        description="Contract Compliance Evaluation Runner"
+    )
     parser.add_argument(
         "--contract",
         default="data/raw_contracts/generic_tech_vendor_contract.md",
@@ -63,12 +65,13 @@ def main():
     if not contract_path.exists():
         raise FileNotFoundError(f"Contract not found: {contract_path}")
 
-
     print(f"\n[1/4] Ingesting & normalizing contract: {contract_path.name}...")
     parser = DocumentParser()
     parsed_doc = parser.parse(contract_path)
     contract_text = parsed_doc.raw_text
-    print(f"      Detected format: {parsed_doc.file_type} | Est. tokens: ~{parsed_doc.estimated_tokens}")
+    print(
+        f"      Detected format: {parsed_doc.file_type} | Est. tokens: ~{parsed_doc.estimated_tokens}"
+    )
     print(f"      Found {len(parsed_doc.detected_sections)} structural sections.")
 
     print("[2/4] Executing compliance audit with Gemini Flash...")

@@ -95,8 +95,14 @@ class ContractAuditReport(BaseModel):
     @model_validator(mode="after")
     def sync_and_validate_counts(self) -> "ContractAuditReport":
         """Recalculate summary counts directly from the results array to eliminate LLM arithmetic drift."""
-        self.compliant_count = sum(1 for r in self.results if r.status == ComplianceStatus.MET)
-        self.deviation_count = sum(1 for r in self.results if r.status == ComplianceStatus.DEVIATION)
-        self.silent_count = sum(1 for r in self.results if r.status == ComplianceStatus.SILENT)
+        self.compliant_count = sum(
+            1 for r in self.results if r.status == ComplianceStatus.MET
+        )
+        self.deviation_count = sum(
+            1 for r in self.results if r.status == ComplianceStatus.DEVIATION
+        )
+        self.silent_count = sum(
+            1 for r in self.results if r.status == ComplianceStatus.SILENT
+        )
         self.total_items_audited = len(self.results)
         return self
