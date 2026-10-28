@@ -333,6 +333,50 @@ def test_csv_scorecard_header_repair_and_slugify(tmp_path):
     assert "Apex Cloud MSA" in lines[2]
 
 
+def test_audit_contract_with_recursive_hierarchy_injects_precedence_context(mocker):
+    """Verify ContractAuditor formats L0 -> L1 -> L2 hierarchy context and grounds multi-doc citations."""
+    mock_genai_client = mocker.MagicMock()
+    mock_response = mocker.MagicMock()
+    mock_response.text = json.dumps(MOCK_AUDIT_PAYLOAD)
+    mock_genai_client.models.generate_content.return_value = mock_response
+
+    mocker.patch.dict(os.environ, {"GEMINI_API_KEY": "test-dummy-key"})
+    auditor = ContractAuditor()
+    auditor.client = mock_genai_client
+
+    parser = DocumentParser()
+    hierarchy = parser.parse_text_hierarchy(
+        [
+            (
+                "Addendum",
+                "## Section 1: Override\n1.1 Payment Override. Notwithstanding Section 3.2 of the SOW, invoices are payable within thirty (30) calendar days.",
+            ),
+            (
+                "SOW",
+                "## Section 3: Fees\n3.2 Invoicing Schedule. Invoices are payable within thirty (30) calendar days.\n3.3 Fee Adjustments. Increase annual subscription fees by up to seven percent (7.0%).",
+            ),
+            ("MSA", SYNTHETIC_CONTRACT_TEXT),
+        ]
+    )
+
+    report = auditor.audit_contract(
+        contract_text=hierarchy.compile_hierarchical_text(),
+        contract_title="Apex Cloud Addendum #1",
+        vendor_name="Apex Cloud Technologies, LLC",
+        parsed_contract=hierarchy,
+    )
+
+    called_prompt = mock_genai_client.models.generate_content.call_args.kwargs[
+        "contents"
+    ][0]
+    assert "CONTRACT GOVERNING HIERARCHY" in called_prompt
+    assert "Level L0**: `Addendum`" in called_prompt
+    assert "Level L1**: `SOW`" in called_prompt
+    assert "Level L2**: `MSA`" in called_prompt
+    assert "[Addendum (L0)]" in called_prompt
+    assert report.compliant_count == 3
+
+
 @pytest.mark.skipif(
     not os.environ.get("GEMINI_API_KEY"),
     reason="GEMINI_API_KEY not configured; skipping live API test.",

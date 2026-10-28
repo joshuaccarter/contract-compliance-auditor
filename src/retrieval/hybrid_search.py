@@ -49,6 +49,15 @@ _STOPWORDS: frozenset[str] = frozenset(
     }
 )
 
+_OVERRIDE_MAGIC_PHRASES: tuple[str, ...] = (
+    "notwithstanding",
+    "supersedes",
+    "hereby amended",
+    "hereby replaced",
+    "in the event of a conflict",
+    "modified as follows",
+)
+
 
 @dataclass
 class ClauseMatch:
@@ -307,7 +316,6 @@ class HybridContractRetriever:
                 str(k).strip() for k in (item.get("keywords") or []) if str(k).strip()
             ]
             if not raw_keywords:
-                # Extract fallback keywords from item name and description
                 fallback_text = f"{item.get('name', '')} {item.get('description', '')} {item.get('target_value', '')}"
                 raw_keywords = self.tokenize(fallback_text, include_stems=False)
 
@@ -330,7 +338,7 @@ class HybridContractRetriever:
             )
 
             item_clause_results: list[tuple[float, list[str], list[str]]] = []
-            for idx in range(len(clauses)):
+            for idx, clause in enumerate(clauses):
                 freq_map = doc_freqs[idx]
                 dl = doc_lens[idx]
                 norm_text = norm_clause_texts[idx]
@@ -371,6 +379,12 @@ class HybridContractRetriever:
                     if norm_phrase and norm_phrase in norm_text:
                         matched_magic.append(str(orig_phrase))
 
+                # 4. In multi-tier hierarchies, detect contractual override magic phrases
+                if clause.source_document and (bm25_score > 0.0 or matched_magic):
+                    for ov_phrase in _OVERRIDE_MAGIC_PHRASES:
+                        if ov_phrase in norm_text and ov_phrase not in matched_magic:
+                            matched_magic.append(ov_phrase)
+
                 total_sparse = bm25_score + (
                     len(matched_magic) * self.magic_phrase_boost
                 )
@@ -382,12 +396,23 @@ class HybridContractRetriever:
 
     @staticmethod
     def _find_referenced_clause(
-        ref_num: str, clauses: list[ContractClause]
+        ref_num: str,
+        clauses: list[ContractClause],
+        from_level: int = 0,
     ) -> ContractClause | None:
-        """Locates a clause corresponding to a cross-referenced section number (e.g., '9' or '8.1')."""
+        """Recursively searches the current level and ancestor levels (L0 -> L1 -> Ln) for a referenced section."""
         target_exact = f"section {ref_num}".lower()
         target_prefix = f"section {ref_num}.".lower()
-        for clause in clauses:
+
+        # Prioritize clauses at the current or higher-numbered (ancestor/parent) precedence levels
+        ordered_clauses = sorted(
+            clauses,
+            key=lambda c: (
+                0 if c.precedence_level >= from_level else 1,
+                abs(c.precedence_level - from_level),
+            ),
+        )
+        for clause in ordered_clauses:
             cid = clause.clause_id.lower()
             heading = clause.section_heading.lower()
             if (
@@ -403,7 +428,7 @@ class HybridContractRetriever:
         clauses: list[ContractClause],
         rubric_items: list[dict[str, Any]],
     ) -> list[RubricRetrievalBundle]:
-        """Executes hybrid dense + sparse retrieval with RRF fusion for all rubric items."""
+        """Executes hybrid dense + sparse retrieval with RRF fusion and recursive hierarchy resolution."""
         if not clauses:
             return [
                 RubricRetrievalBundle(
@@ -415,7 +440,7 @@ class HybridContractRetriever:
             ]
 
         clause_repr_texts = [
-            f"{c.section_heading} - {c.clause_id} {c.clause_title}: {c.text}"
+            f"{c.qualified_id} {c.section_heading} {c.clause_title}: {c.text}"
             for c in clauses
         ]
         rubric_queries = [self._build_rubric_query(item) for item in rubric_items]
@@ -483,6 +508,10 @@ class HybridContractRetriever:
                 if matched_magic:
                     rrf_val += 0.005 * len(matched_magic)
 
+                # In multi-document hierarchies, favor higher-precedence tiers (L0 > L1 > L2) on relevant matches
+                if clause.source_document and s_score > 0.0:
+                    rrf_val += 0.002 / (1.0 + clause.precedence_level)
+
                 if rrf_val > 0.0:
                     candidates.append(
                         ClauseMatch(
@@ -497,24 +526,68 @@ class HybridContractRetriever:
                         )
                     )
 
-            # Sort candidates by RRF score descending, then sparse_score, then dense_score
+            # Sort candidates by RRF score descending, then precedence_level ascending, then sparse_score
             candidates.sort(
-                key=lambda m: (m.rrf_score, m.sparse_score, m.dense_score),
+                key=lambda m: (
+                    m.rrf_score,
+                    -m.clause.precedence_level,
+                    m.sparse_score,
+                    m.dense_score,
+                ),
                 reverse=True,
             )
             top_matches = candidates[: self.top_k]
+            included_ids = {m.clause.qualified_id for m in top_matches}
 
-            # 4. Expand explicit cross-references from top matched clauses
+            # 4. Down-chain Amendment Detection: attach child clauses (L_child < L_match) that explicitly amend the primary matched section
+            amending_matches: list[ClauseMatch] = []
+            if top_matches:
+                primary_match = top_matches[0]
+                primary_sec_num = re.sub(
+                    r"^(?:Section|Article|Clause)\s+",
+                    "",
+                    primary_match.clause.clause_id,
+                    flags=re.IGNORECASE,
+                ).strip()
+                for c_idx, clause in enumerate(clauses):
+                    if clause.qualified_id in included_ids:
+                        continue
+                    if (
+                        primary_sec_num in clause.referenced_sections
+                        and clause.precedence_level
+                        < primary_match.clause.precedence_level
+                    ):
+                        s_score, matched_magic, matched_kw = sparse_entries[c_idx]
+                        included_ids.add(clause.qualified_id)
+                        amending_matches.append(
+                            ClauseMatch(
+                                clause=clause,
+                                rrf_score=round(primary_match.rrf_score + 0.001, 6),
+                                dense_score=round(dense_scores[c_idx], 4),
+                                sparse_score=round(s_score, 4),
+                                dense_rank=dense_ranks.get(c_idx),
+                                sparse_rank=sparse_ranks.get(c_idx),
+                                matched_magic_phrases=matched_magic,
+                                matched_keywords=matched_kw,
+                            )
+                        )
+
+            combined_primary = amending_matches + top_matches
+
+            # 5. Up-chain Cross-Reference Resolution: search current & ancestor documents (L0 -> L1 -> Ln)
             missing_refs: list[str] = []
-            included_ids = {m.clause.clause_id for m in top_matches}
             cross_ref_matches: list[ClauseMatch] = []
 
-            for match in top_matches:
+            for match in combined_primary:
                 for ref_num in match.clause.referenced_sections:
-                    ref_clause = self._find_referenced_clause(ref_num, clauses)
+                    ref_clause = self._find_referenced_clause(
+                        ref_num,
+                        clauses,
+                        from_level=match.clause.precedence_level,
+                    )
                     if ref_clause is not None:
-                        if ref_clause.clause_id not in included_ids:
-                            included_ids.add(ref_clause.clause_id)
+                        if ref_clause.qualified_id not in included_ids:
+                            included_ids.add(ref_clause.qualified_id)
                             cross_ref_matches.append(
                                 ClauseMatch(
                                     clause=ref_clause,
@@ -536,7 +609,7 @@ class HybridContractRetriever:
                     item_id=str(item.get("id", "")),
                     item_name=str(item.get("name", "")),
                     query_text=rubric_queries[item_idx],
-                    matches=top_matches + cross_ref_matches,
+                    matches=combined_primary + cross_ref_matches,
                     missing_cross_references=missing_refs,
                 )
             )

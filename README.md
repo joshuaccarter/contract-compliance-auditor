@@ -6,7 +6,7 @@
 [![Package Manager](https://img.shields.io/badge/uv-Fast%20Packaging-purple.svg)](https://docs.astral.sh/uv/)
 [![Testing](https://img.shields.io/badge/Pytest-Passing-brightgreen.svg?logo=pytest)](https://pytest.org/)
 
-An automated document intelligence engine designed to audit inbound vendor technology agreements against enterprise procurement policies. Powered by Hybrid Search (Dense Semantic + Sparse BM25 & Legal "Magic Phrase" Matching), Google Gemini, and Pydantic v2 structured decoding, the system converts unstructured legal text into a standardized compliance intake matrix complete with clause citations, alignment degrees, and calibrated confidence ratings (`HIGH`, `MEDIUM`, `LOW`).
+An automated document intelligence engine designed to audit inbound vendor technology agreements against enterprise procurement policies. Powered by Hybrid Search (Dense Semantic + Sparse BM25 & Legal "Magic Phrase" Matching), Recursive Multi-Tier Hierarchy Resolution, Google Gemini, and Pydantic v2 structured decoding, the system converts unstructured legal text into a standardized compliance intake matrix complete with clause citations, alignment degrees, and calibrated confidence ratings (`HIGH`, `MEDIUM`, `LOW`).
 
 ---
 
@@ -19,7 +19,7 @@ In enterprise procurement and legal operations, reviewing inbound vendor paper i
 
 ### The Solution
 This engine transforms manual review into an automated, deterministic audit (< 2 minutes per contract):
-1. Ingests, normalizes, and chunks multi-format contracts (`.md`, `.txt`, `.docx`) into hierarchical `ContractClause` units while preserving inline tables and cross-references.
+1. Ingests, normalizes, and chunks multi-format contracts (`.md`, `.txt`, `.docx`) into hierarchical `ContractClause` units while preserving inline tables, cross-references, and recursive governing relationships (`Addendum -> SOW -> MSA`).
 2. Executes **Hybrid Dense + Sparse Retrieval** per standard component—fusing semantic embeddings (`gemini-embedding-001`) with Okapi BM25 lexical matching and exact contractual "magic phrase" boosting via Reciprocal Rank Fusion (RRF).
 3. Uses Gemini's constrained JSON generation (with exponential backoff retry) to extract itemized verdicts (`MET`, `DEVIATION`, `SILENT`), granular alignment degrees (`ALIGNED_STANDARD`, `ALIGNED_FALLBACK`, `PARTIAL_ALIGNMENT`, `MATERIAL_DEVIATION`, `SILENT`), and calibrated confidence levels (`HIGH`, `MEDIUM`, `LOW`) alongside verbatim clause citations.
 4. Auto-generates stakeholder deliverables: human-readable Markdown sheets, formatted Microsoft Word (`.docx`) intake assessments, and an append-only CSV audit ledger.
@@ -29,35 +29,36 @@ This engine transforms manual review into an automated, deterministic audit (< 2
 ## 🏗 System Architecture
 
 ```text
-                [ Inbound Contract (.md / .docx / .txt) ]
-                                   │
-                                   ▼
-               [ Clause-Aware DocumentParser & Chunker ]
-               - Preserves reading order of paragraphs & tables
-               - Segments into hierarchical ContractClause chunks
-               - Extracts section cross-references (e.g. Section 9)
-                                   │
-                                   ▼
-            [ Hybrid Dense + Sparse Clause Search Engine ]
-            - Dense: Gemini Semantic Embeddings (Cosine Sim)
-            - Sparse: Okapi BM25 + Legal "Magic Phrase" Boost
-            - Fusion: Reciprocal Rank Fusion (RRF) + Cross-Refs
-                                   │
-                                   ▼
-                   [ Google Gemini Audit Engine ]
-                    - Model: gemini-flash-latest (Temp: 0.0)
-                    - Exponential Backoff API Retry (client.py)
-                    - Constrained JSON Schema Decoding
-                                   │
-                                   ▼
-          [ Pydantic v2 Validation & Grounding Calibration ]
-            - Post-validation count & alignment synchronization
-            - Verbatim quote grounding & confidence calibration
-                                   │
-          ┌────────────────────────┼────────────────────────┐
-          ▼                        ▼                        ▼
-[ Markdown Report ]     [ Word (.docx) Sheet ]   [ Compliance Ledger ]
-(reports/audit_results) (reports/audit_results)  (reports/compliance_scorecard.csv)
+      [ Inbound Contract or Hierarchy (L0 Addendum -> L1 SOW -> L2 MSA) ]
+                                       │
+                                       ▼
+                 [ Clause-Aware DocumentParser & Chunker ]
+                 - Preserves reading order of paragraphs & tables
+                 - Segments into hierarchical ContractClause chunks
+                 - Namespaces tiers ([L0], [L1], [L2]) & cross-refs
+                                       │
+                                       ▼
+               [ Hybrid Dense + Sparse Clause Search Engine ]
+               - Dense: Gemini Semantic Embeddings (Cosine Sim)
+               - Sparse: Okapi BM25 + Legal "Magic Phrase" Boost
+               - Fusion: Reciprocal Rank Fusion (RRF) + Cross-Refs
+               - Resolves up-chain inheritance & down-chain overrides
+                                       │
+                                       ▼
+                      [ Google Gemini Audit Engine ]
+                       - Model: gemini-flash-latest (Temp: 0.0)
+                       - Exponential Backoff API Retry (client.py)
+                       - Constrained JSON Schema Decoding
+                                       │
+                                       ▼
+             [ Pydantic v2 Validation & Grounding Calibration ]
+               - Post-validation count & alignment synchronization
+               - Verbatim quote grounding & confidence calibration
+                                       │
+          ┌────────────────────────────┼────────────────────────────┐
+          ▼                            ▼                            ▼
+[ Markdown Report ]         [ Word (.docx) Sheet ]       [ Compliance Ledger ]
+(reports/audit_results)     (reports/audit_results)      (reports/compliance_scorecard.csv)
 ```
 
 ## 🛡 Key Technical Innovations & Guardrails
@@ -69,11 +70,21 @@ This engine transforms manual review into an automated, deterministic audit (< 2
 
     $$\text{RRF}(c) = \frac{w\text{ (dense)}}{k + \text{rank(dense, } c\text{)}} + \frac{w\text{ (sparse)}}{k + \text{rank(sparse, } c\text{)}} + \text{MagicBoost}(c)$$
 
-2. **Declarative Policy & Search Decoupling**  
+2. **Recursive Multi-Tier Contract Hierarchy (`Addendum -> SOW -> MSA`)**
+
+    When onboarding a new agreement for an existing vendor (such as an Addendum or Change Order governed by a Statement of Work, which in turn is governed by a Master Services Agreement), `ParsedContract` models the relationship recursively via `parent_contract`:
+
+    $$\text{Level 0 (Addendum)} \longrightarrow \text{Level 1 (SOW / Order Form)} \longrightarrow \text{Level 2 (Base MSA)}$$
+
+    * **Document-Qualified Clause Namespacing:** `resolve_hierarchical_clauses()` walks the chain recursively (`iter_hierarchy()` with cycle detection) and prefixes every `ContractClause` with its document label and precedence tier (e.g., `[Addendum (L0)] Section 1.1`, `[SOW (L1)] Section 3.2`, `[MSA (L2)] Section 11.2`) so identically numbered sections across documents never collide.
+    * **Down-Chain Override & Amendment Linking:** If a higher-precedence document (`L0` Addendum) contains override language (`"notwithstanding"`, `"supersedes"`, `"hereby amended"`) or references a section number in a parent agreement (`L1` SOW or `L2` MSA), `HybridContractRetriever` automatically links and prioritizes the `L0` override clause alongside the parent baseline clause.
+    * **Up-Chain Inheritance & Cross-Reference Resolution:** If `L0` omits foundational legal clauses (such as Indemnification, Limitation of Liability, or Governing Law), the retriever and audit engine recursively inherit governing clauses from `L1`, `L2`, ..., `Ln`, and resolve cross-references (such as `"Section 9"`) across ancestor agreements before flagging any reference as missing.
+
+3. **Declarative Policy & Search Decoupling**  
 
     Business requirements, fallback tolerances, retrieval weights, domain `keywords`, and legal `magic_phrases` are decoupled from Python application code in `config/audit_rubric.yaml`. Procurement teams can update SLA baselines, renewal windows, or search phrases without modifying the core parsing or inference modules.
 
-3. **Eliminating Arithmetic Hallucination Drift & Calibrating Confidence**
+4. **Eliminating Arithmetic Hallucination Drift & Calibrating Confidence**
 
     Large language models can suffer from internal counting drift when generating structured JSON arrays. `ContractAuditReport.recalculate_counts()` (triggered via `@model_validator(mode="after")`) dynamically computes all status and confidence counts (`high_confidence_count`, `medium_confidence_count`, `low_confidence_count`) directly from the validated `results` list:
 
@@ -84,13 +95,13 @@ This engine transforms manual review into an automated, deterministic audit (< 2
     $$\text{SilentCount} = \sum [r.\text{status} == \text{SILENT}]$$
 
     Furthermore, `ContractAuditor.verify_and_calibrate_report()` performs deterministic post-validation checks:
-    * **Citation Grounding (`_is_citation_grounded`):** Verifies that quoted excerpts or section references exist in the contract text; ungrounded citations are automatically downgraded to `LOW` confidence.
-    * **Dangling Cross-Reference Calibration:** When a matched clause depends on a cross-referenced section omitted from the contract (e.g., `"Section 9"` referenced in Section 11.2), confidence is capped at `MEDIUM`.
+    * **Citation Grounding (`_is_citation_grounded`):** Verifies that quoted excerpts or section references exist in the compiled contract hierarchy text; ungrounded citations are automatically downgraded to `LOW` confidence.
+    * **Dangling Cross-Reference Calibration:** When a matched clause depends on a cross-referenced section omitted across the entire contract hierarchy (e.g., `"Section 9"` referenced in Section 11.2 when no document in the chain contains Section 9), confidence is capped at `MEDIUM`.
 
-4. **Explicit "Absence as an Insight" (Handling Silence)**
+5. **Explicit "Absence as an Insight" (Handling Silence)**
 
     In standard RAG search, an unmentioned topic yields poor retrieval or hallucinated boilerplate. In this compliance engine, silence is an explicit contractual finding:
-    * If an agreement omits Termination for Convenience or Indemnification, the model flags the item as `SILENT` (`AlignmentDegree.SILENT`) and records the citation as `"Not Found / Silent"`.
+    * If the entire agreement chain omits Termination for Convenience or Indemnification, the model flags the item as `SILENT` (`AlignmentDegree.SILENT`) and records the citation as `"Not Found / Silent"`.
 
 ## 🛠 Tech Stack
 * Language & Runtime: Python 3.11+
@@ -119,10 +130,10 @@ contract-compliance-auditor/
 │   └── compliance_scorecard.csv   # Historical audit tracking ledger (.gitignored)
 ├── src/
 │   ├── __init__.py
-│   ├── run_audit.py               # Pipeline CLI entry point
+│   ├── run_audit.py               # Pipeline CLI entry point (single & recursive chains)
 │   ├── parsing/
 │   │   ├── __init__.py
-│   │   └── document_parser.py     # Ingestion, normalization & clause-level chunking
+│   │   └── document_parser.py     # Ingestion, clause chunking & recursive hierarchy builder
 │   ├── retrieval/
 │   │   ├── __init__.py
 │   │   └── hybrid_search.py       # Dense + Sparse (BM25 + Magic Phrase) RRF retriever
@@ -136,8 +147,8 @@ contract-compliance-auditor/
 │       └── reporter.py            # Markdown and Word (.docx) document renderers
 ├── tests/
 │   ├── __init__.py
-│   ├── test_parser.py             # Ingestion, DOCX order & clause chunking unit tests
-│   ├── test_hybrid_search.py      # Dense, sparse, magic-phrase & cross-ref search tests
+│   ├── test_parser.py             # Ingestion, DOCX order, chunking & hierarchy tests
+│   ├── test_hybrid_search.py      # Dense, sparse, magic-phrase & 3-tier hierarchy tests
 │   ├── test_schemas.py            # Pydantic validation & confidence sync unit tests
 │   └── test_audit_engine.py       # Offline mock pipeline, calibration & live API tests
 ├── pyproject.toml                 # uv-managed dependencies and tool configurations
@@ -165,7 +176,7 @@ contract-compliance-auditor/
 3. **Run Automated Tests & Static Analysis**
 
     ```bash
-    # Run offline unit, hybrid search, and schema tests
+    # Run offline unit, hybrid search, hierarchy, and schema tests
     uv run pytest tests/ -k "not test_live_gemini" -v
 
     # Run the full suite including live Gemini API integration
@@ -176,10 +187,51 @@ contract-compliance-auditor/
     uv run mypy src tests
     ```
 
-4. **Execute Contract Compliance Audit**
+4. **Execute a Standalone Contract Compliance Audit**
 
     ```bash
-    uv run python -m src.run_audit --contract data/raw_contracts/generic_tech_vendor_contract.md --title "Apex Cloud MSA" --vendor "Apex Cloud Technologies, LLC"
+    uv run python -m src.run_audit \
+      --contract data/raw_contracts/generic_tech_vendor_contract.md \
+      --title "Apex Cloud MSA" \
+      --vendor "Apex Cloud Technologies, LLC"
+    ```
+
+5. **Execute a Recursive Multi-Tier Hierarchy Audit (`Addendum -> SOW -> MSA`)**
+
+    When onboarding a new contract (e.g., an Addendum or SOW) that is governed by one or more existing agreements, pass the new contract to `--contract` (`Level 0`, highest precedence) and list its governing parent agreements in order from immediate parent (`Level 1`, e.g. SOW) up to the root master agreement (`Level n`, e.g. MSA) using `--parent-contracts`:
+
+    ```bash
+    uv run python -m src.run_audit \
+      --contract data/raw_contracts/sow_addendum.md \
+      --parent-contracts data/raw_contracts/vendor_sow.md data/raw_contracts/generic_tech_vendor_contract.md \
+      --title "Apex Cloud SOW Addendum 1" \
+      --vendor "Apex Cloud Technologies, LLC"
+    ```
+
+    You can also build and evaluate arbitrary-depth recursive hierarchies programmatically:
+
+    ```python
+    from src.audit.engine import ContractAuditor
+    from src.parsing.document_parser import DocumentParser
+
+    parser = DocumentParser()
+    # Ordered from highest-precedence leaf (L0) to root base agreement (L2)
+    hierarchy_root = parser.parse_hierarchy(
+        contract_paths=[
+            "data/raw_contracts/sow_addendum.md",
+            "data/raw_contracts/vendor_sow.md",
+            "data/raw_contracts/generic_tech_vendor_contract.md",
+        ],
+        labels=["Addendum", "SOW", "MSA"],
+    )
+
+    auditor = ContractAuditor()
+    report = auditor.audit_contract(
+        contract_text=hierarchy_root.compile_hierarchical_text(),
+        contract_title="Apex Cloud SOW Addendum 1",
+        vendor_name="Apex Cloud Technologies, LLC",
+        parsed_contract=hierarchy_root,
+    )
     ```
 
 ## 📊 Sample Audit Output

@@ -111,3 +111,50 @@ def test_parser_unsupported_format(tmp_path):
     parser = DocumentParser()
     with pytest.raises(ValueError, match="Unsupported file format"):
         parser.parse(invalid_file)
+
+
+def test_parser_recursive_hierarchy_three_tiers(tmp_path):
+    """Verifies recursive parsing of Addendum (L0) -> SOW (L1) -> MSA (L2) hierarchy."""
+    msa_path = tmp_path / "base_msa.md"
+    sow_path = tmp_path / "vendor_sow.md"
+    addendum_path = tmp_path / "sow_addendum.md"
+
+    msa_path.write_text(
+        "## Section 14: General\n14.1 Governing Law. Governed by Delaware law.",
+        encoding="utf-8",
+    )
+    sow_path.write_text(
+        "## Section 3: Commercials\n3.2 Invoicing. Invoices payable Net 30 days.",
+        encoding="utf-8",
+    )
+    addendum_path.write_text(
+        "## Section 1: Amendments\n1.1 Payment Override. Notwithstanding Section 3.2, invoices are payable Net 60 days.",
+        encoding="utf-8",
+    )
+
+    parser = DocumentParser()
+    root = parser.parse_hierarchy(
+        [addendum_path, sow_path, msa_path],
+        labels=["Addendum", "SOW", "MSA"],
+    )
+
+    chain = root.iter_hierarchy()
+    assert [node.document_label for node in chain] == ["Addendum", "SOW", "MSA"]
+
+    clauses = root.resolve_hierarchical_clauses()
+    qualified_ids = [c.qualified_id for c in clauses]
+    assert "[Addendum (L0)] Section 1.1" in qualified_ids
+    assert "[SOW (L1)] Section 3.2" in qualified_ids
+    assert "[MSA (L2)] Section 14.1" in qualified_ids
+
+    compiled_text = root.compile_hierarchical_text()
+    assert "LEVEL 0 (PRIMARY / HIGHEST PRECEDENCE): Addendum" in compiled_text
+    assert "LEVEL 1 (INTERMEDIATE GOVERNING AGREEMENT): SOW" in compiled_text
+    assert "LEVEL 2 (BASE MASTER AGREEMENT): MSA" in compiled_text
+
+    # Verify cycle guard raises ValueError if a parent pointer loops back
+    assert root.parent_contract is not None
+    assert root.parent_contract.parent_contract is not None
+    root.parent_contract.parent_contract.parent_contract = root
+    with pytest.raises(ValueError, match="Circular contract hierarchy"):
+        root.iter_hierarchy()

@@ -140,3 +140,71 @@ def test_hybrid_search_uses_gemini_dense_embeddings_when_available():
     assert bundles[0].matches[0].clause.clause_id == "Section 2.1"
     assert bundles[0].matches[0].dense_rank == 1
     assert bundles[0].matches[0].dense_score > 0.99
+
+
+def test_hybrid_search_recursive_three_tier_hierarchy_inheritance_and_override():
+    """Verify hybrid search resolves overrides, amendments, and inherited clauses across L0 -> L1 -> L2."""
+    msa_text = """
+## Section 5: Term and Termination
+5.1 Auto-Renewal. Agreement automatically renews unless written notice of non-renewal is given 15 days prior.
+
+## Section 9: Confidentiality
+9.1 Obligations. Both parties shall keep Confidential Information strictly confidential.
+
+## Section 11: Limitation of Liability
+11.2 Liability Ceiling. EXCEPT FOR BREACHES OF CONFIDENTIALITY UNDER SECTION 9, TOTAL AGGREGATE LIABILITY IS LIMITED TO FEES ACTUALLY PAID IN THE PRECEDING 12 MONTHS.
+
+## Section 14: General Provisions
+14.1 Governing Law. Governed by the laws of the State of Delaware.
+"""
+    sow_text = """
+## Section 3: Fees and Payment
+3.2 Invoicing Schedule. Invoices are payable within thirty (30) calendar days from the date of the invoice.
+
+## Section 8: Service Levels
+8.1 Uptime Commitment. Vendor will use commercially reasonable efforts to maintain System Availability of 99.9% each calendar month.
+"""
+    addendum_text = """
+## Section 1: Amendments to SOW and MSA
+1.1 Renewal Window Amendment. Section 5.1 of the MSA is hereby amended to require sixty (60) days prior written notice.
+3.2 Payment Terms Override. Notwithstanding Section 3.2 of the SOW, all undisputed fees under this Addendum are payable Net 60 days from the date of the invoice.
+"""
+
+    parser = DocumentParser()
+    hierarchy = parser.parse_text_hierarchy(
+        [
+            ("Addendum", addendum_text),
+            ("SOW", sow_text),
+            ("MSA", msa_text),
+        ]
+    )
+    clauses = hierarchy.resolve_hierarchical_clauses()
+    rubric = _load_rubric()
+
+    retriever = HybridContractRetriever(client=None, top_k=3)
+    bundles = retriever.retrieve_for_rubric(clauses, rubric)
+    bundle_map = {b.item_id: b for b in bundles}
+
+    # REQ-06 (Payment Terms): L0 Addendum override ranks #1 ahead of L1 SOW
+    req06_ids = [m.clause.qualified_id for m in bundle_map["REQ-06"].matches]
+    assert req06_ids[0] == "[Addendum (L0)] Section 3.2"
+    assert "[SOW (L1)] Section 3.2" in req06_ids
+    assert "notwithstanding" in bundle_map["REQ-06"].matches[0].matched_magic_phrases
+
+    # REQ-03 (Auto-Renewal): L0 Addendum Section 1.1 (amending Section 5.1) and L2 MSA Section 5.1 are both surfaced
+    req03_ids = [m.clause.qualified_id for m in bundle_map["REQ-03"].matches]
+    assert "[Addendum (L0)] Section 1.1" in req03_ids
+    assert "[MSA (L2)] Section 5.1" in req03_ids
+
+    # REQ-01 (SLA): Inherited from L1 SOW Section 8.1
+    assert bundle_map["REQ-01"].matches[0].clause.qualified_id == "[SOW (L1)] Section 8.1"
+
+    # REQ-09 (Liability Cap): Inherited from L2 MSA Section 11.2, with Section 9 resolved in L2 MSA
+    req09 = bundle_map["REQ-09"]
+    assert req09.missing_cross_references == []
+    req09_ids = [m.clause.qualified_id for m in req09.matches]
+    assert "[MSA (L2)] Section 11.2" in req09_ids
+    assert "[MSA (L2)] Section 9.1" in req09_ids
+
+    # REQ-10 (Governing Law): Inherited from L2 MSA Section 14.1
+    assert bundle_map["REQ-10"].matches[0].clause.qualified_id == "[MSA (L2)] Section 14.1"

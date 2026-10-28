@@ -66,7 +66,16 @@ def main() -> None:
     parser.add_argument(
         "--contract",
         default="data/raw_contracts/generic_tech_vendor_contract.md",
-        help="Path to contract file",
+        help="Path to primary contract file being onboarded (Level 0, highest precedence)",
+    )
+    parser.add_argument(
+        "--parent-contracts",
+        nargs="*",
+        default=[],
+        help=(
+            "Optional governing parent contract paths ordered from immediate parent (L1, e.g. SOW) "
+            "up to the root master agreement (Ln, e.g. MSA)"
+        ),
     )
     parser.add_argument(
         "--title",
@@ -84,18 +93,42 @@ def main() -> None:
     if not contract_path.exists():
         raise FileNotFoundError(f"Contract not found: {contract_path}")
 
-    print(
-        f"\n[1/4] Ingesting, normalizing & chunking contract: {contract_path.name}..."
-    )
+    parent_paths = [Path(p) for p in args.parent_contracts]
+    for p_path in parent_paths:
+        if not p_path.exists():
+            raise FileNotFoundError(f"Parent contract not found: {p_path}")
+
     doc_parser = DocumentParser()
-    parsed_doc = doc_parser.parse(contract_path)
-    contract_text = parsed_doc.raw_text
-    print(
-        f"      Detected format: {parsed_doc.file_type} | Est. tokens: ~{parsed_doc.estimated_tokens}"
-    )
-    print(
-        f"      Found {len(parsed_doc.detected_sections)} structural sections and {len(parsed_doc.clauses)} clause chunks."
-    )
+    if parent_paths:
+        all_paths = [contract_path, *parent_paths]
+        chain_str = " -> ".join(
+            f"L{idx}:{p.name}" for idx, p in enumerate(all_paths)
+        )
+        print(f"\n[1/4] Ingesting recursive contract hierarchy: {chain_str}...")
+        parsed_doc = doc_parser.parse_hierarchy(all_paths)
+        resolved_clauses = parsed_doc.resolve_hierarchical_clauses()
+        contract_text = parsed_doc.compile_hierarchical_text()
+        total_tokens = sum(
+            node.estimated_tokens for node in parsed_doc.iter_hierarchy()
+        )
+        print(
+            f"      Hierarchy depth: {len(all_paths)} documents | Combined est. tokens: ~{total_tokens}"
+        )
+        print(
+            f"      Resolved {len(resolved_clauses)} total hierarchical clause chunks."
+        )
+    else:
+        print(
+            f"\n[1/4] Ingesting, normalizing & chunking contract: {contract_path.name}..."
+        )
+        parsed_doc = doc_parser.parse(contract_path)
+        contract_text = parsed_doc.raw_text
+        print(
+            f"      Detected format: {parsed_doc.file_type} | Est. tokens: ~{parsed_doc.estimated_tokens}"
+        )
+        print(
+            f"      Found {len(parsed_doc.detected_sections)} structural sections and {len(parsed_doc.clauses)} clause chunks."
+        )
 
     print(
         "[2/4] Executing hybrid search (dense + sparse) & compliance audit with Gemini..."

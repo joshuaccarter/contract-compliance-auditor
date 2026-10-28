@@ -71,31 +71,39 @@ class ContractAuditor:
         """Construct the compliance persona and evaluation guardrails."""
         return (
             "You are an expert enterprise legal compliance auditor and procurement specialist.\n"
-            "Your objective is to strictly evaluate the submitted contract against the provided "
-            "policy rubric checklist using the hybrid search (dense semantic + sparse keyword/magic-phrase) "
-            "retrieved clauses and full contract context.\n\n"
+            "Your objective is to strictly evaluate the submitted contract (or recursive contract hierarchy) "
+            "against the provided policy rubric checklist using the hybrid search (dense semantic + sparse "
+            "keyword/magic-phrase) retrieved clauses and full contract context.\n\n"
             "CRITICAL INSTRUCTIONS:\n"
-            "1. Grounding: Audit strictly against the facts and clauses in the provided contract. "
+            "1. Grounding: Audit strictly against the facts and clauses in the provided contract documents. "
             "Do not extrapolate or assume unstated terms.\n"
             "2. Hybrid Evidence Priority: Inspect the top retrieved clauses and matched 'magic phrases' "
             "for each rubric item first, then verify against the full contract text.\n"
-            "3. Status & Alignment Degree Determination:\n"
-            "   - 'MET': The contract clause satisfies the policy standard ('ALIGNED_STANDARD') "
+            "3. Recursive Hierarchy & Order of Precedence (L0 -> L1 -> ... -> Ln):\n"
+            "   - Lower level numbers have higher legal precedence (e.g., L0 Addendum overrides L1 SOW, "
+            "which overrides L2 Base MSA).\n"
+            "   - Override: If a higher-precedence document (L0/L1) amends, replaces, or conflicts with an "
+            "ancestor agreement, evaluate compliance based on the governing higher-precedence clause.\n"
+            "   - Inheritance: If a higher-precedence document is silent on a topic, recursively inherit the "
+            "governing clause from the nearest ancestor agreement (L1, then L2, etc.).\n"
+            "   - Silence: Mark an item as 'SILENT' only if it is omitted across the entire hierarchy.\n"
+            "4. Status & Alignment Degree Determination:\n"
+            "   - 'MET': The governing clause satisfies the policy standard ('ALIGNED_STANDARD') "
             "or acceptable fallback ('ALIGNED_FALLBACK').\n"
-            "   - 'DEVIATION': The contract addresses the topic but falls short of policy thresholds "
+            "   - 'DEVIATION': The governing clause addresses the topic but falls short of policy thresholds "
             "('PARTIAL_ALIGNMENT' for minor/negotiable gaps or 'MATERIAL_DEVIATION' for major departures).\n"
-            "   - 'SILENT': The contract completely omits the required clause or topic ('SILENT').\n"
-            "4. Confidence Level ('HIGH', 'MEDIUM', 'LOW'):\n"
+            "   - 'SILENT': All documents in the contract hierarchy completely omit the required topic ('SILENT').\n"
+            "5. Confidence Level ('HIGH', 'MEDIUM', 'LOW'):\n"
             "   - 'HIGH': Clear, unambiguous contract language (or unambiguous absence) with strong retrieval match "
             "and no unresolved cross-references.\n"
             "   - 'MEDIUM': Clause relies on qualified language, fallback interpretation, or references an external "
             "section/schedule not fully detailed inline.\n"
             "   - 'LOW': Clause is vague, contradictory, depends on missing cross-referenced sections, or "
             "retrieval evidence is weak.\n"
-            "5. Grounded Citations: For each item, you must provide the exact section number and "
-            "a verbatim excerpt under 'exact_citation'. If the topic is missing, you must set "
+            "6. Grounded Citations: For each item, provide the exact section number (and source document label if "
+            "multi-document) plus a verbatim excerpt under 'exact_citation'. If missing across all documents, set "
             "exact_citation to 'Not Found / Silent'.\n"
-            "6. Schema Integrity: Ensure compliant_count + deviation_count + silent_count "
+            "7. Schema Integrity: Ensure compliant_count + deviation_count + silent_count "
             "strictly equals total_items_audited."
         )
 
@@ -213,7 +221,7 @@ class ContractAuditor:
                         else f"Candidate #{rank_idx} (RRF={match.rrf_score:.4f}, Dense={match.dense_score:.3f}, Sparse={match.sparse_score:.2f})"
                     )
                     lines.append(
-                        f"- **{tag}** | `{c.clause_id}` ({c.section_heading} - {c.clause_title}):"
+                        f"- **{tag}** | `{c.qualified_id}` ({c.section_heading} - {c.clause_title}):"
                     )
                     if match.matched_magic_phrases:
                         lines.append(
@@ -226,10 +234,28 @@ class ContractAuditor:
                     lines.append(f"  - Excerpt: {c.text}")
             if bundle.missing_cross_references:
                 lines.append(
-                    f"- **Warning (Dangling Cross-Reference):** Clause references {', '.join(bundle.missing_cross_references)} which is not present in the contract."
+                    f"- **Warning (Dangling Cross-Reference):** Clause references {', '.join(bundle.missing_cross_references)} which is not present in the contract hierarchy."
                 )
             lines.append("")
         return "\n".join(lines).strip()
+
+    @staticmethod
+    def _format_hierarchy_summary(parsed_contract: ParsedContract | None) -> str:
+        """Formats the recursive governing hierarchy chain (L0 -> L1 -> ... -> Ln) when multi-document."""
+        if parsed_contract is None:
+            return ""
+        chain = parsed_contract.iter_hierarchy()
+        if len(chain) <= 1:
+            return ""
+        chain_lines = [
+            "### CONTRACT GOVERNING HIERARCHY (ORDER OF PRECEDENCE: L0 OVERRIDES L1, L1 OVERRIDES L2, ETC.):"
+        ]
+        for level, node in enumerate(chain):
+            label = node.document_label or Path(node.file_name).stem
+            chain_lines.append(
+                f"- **Level L{level}**: `{label}` (`{node.file_name}`)"
+            )
+        return "\n".join(chain_lines) + "\n\n"
 
     def audit_contract(
         self,
@@ -238,30 +264,33 @@ class ContractAuditor:
         vendor_name: str,
         parsed_contract: ParsedContract | None = None,
     ) -> ContractAuditReport:
-        """Chunk contract, execute hybrid dense+sparse search, and run Gemini compliance evaluation."""
+        """Chunk contract(s), execute hybrid dense+sparse search, and run Gemini compliance evaluation."""
         if parsed_contract is not None and parsed_contract.clauses:
-            clauses = parsed_contract.clauses
+            clauses = parsed_contract.resolve_hierarchical_clauses()
+            effective_contract_text = parsed_contract.compile_hierarchical_text()
         else:
             clauses = DocumentParser().chunk_clauses(
                 contract_text.replace("\r\n", "\n").strip()
             )
+            effective_contract_text = contract_text
 
         retrieval_bundles = self.retrieve_evidence(clauses)
         formatted_evidence = self._format_retrieval_evidence(retrieval_bundles)
+        hierarchy_summary = self._format_hierarchy_summary(parsed_contract)
         num_items = len(self.rubric)
 
         user_prompt = f"""
 ### COMPLIANCE AUDIT RUBRIC ({num_items} MANDATORY ITEMS):
 {json.dumps(self.rubric, indent=2)}
 
-### HYBRID SEARCH RETRIEVED EVIDENCE (DENSE SEMANTIC + SPARSE MAGIC-PHRASE FUSION):
+{hierarchy_summary}### HYBRID SEARCH RETRIEVED EVIDENCE (DENSE SEMANTIC + SPARSE MAGIC-PHRASE FUSION):
 {formatted_evidence}
 
 ### INBOUND VENDOR CONTRACT TEXT:
 Contract Title: {contract_title}
 Vendor: {vendor_name}
 
-{contract_text}
+{effective_contract_text}
 
 ---
 Perform the compliance evaluation for all {num_items} items in the rubric.
@@ -292,6 +321,6 @@ Generate the complete audit assessment conforming strictly to the requested sche
         report = ContractAuditReport.model_validate_json(response.text)
         return self.verify_and_calibrate_report(
             report=report,
-            contract_text=contract_text,
+            contract_text=effective_contract_text,
             bundles=retrieval_bundles,
         )

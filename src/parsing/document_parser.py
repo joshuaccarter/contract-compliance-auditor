@@ -1,7 +1,10 @@
-"""Layout-aware contract document parser and clause-level structural chunker."""
+"""Layout-aware contract document parser, clause-level structural chunker, and recursive hierarchy builder."""
+
+from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import ClassVar
 
@@ -20,11 +23,20 @@ class ContractClause:
     text: str
     token_estimate: int
     referenced_sections: list[str] = field(default_factory=list)
+    source_document: str = ""
+    precedence_level: int = 0
+
+    @property
+    def qualified_id(self) -> str:
+        """Returns a document- and tier-qualified clause ID when part of a governing hierarchy."""
+        if self.source_document:
+            return f"[{self.source_document} (L{self.precedence_level})] {self.clause_id}"
+        return self.clause_id
 
 
 @dataclass
 class ParsedContract:
-    """Standardized representation of an ingested, normalized, and chunked contract."""
+    """Standardized representation of an ingested, normalized, and chunked contract node."""
 
     raw_text: str
     file_name: str
@@ -32,6 +44,65 @@ class ParsedContract:
     detected_sections: list[str]
     estimated_tokens: int
     clauses: list[ContractClause] = field(default_factory=list)
+    document_label: str = ""
+    parent_contract: ParsedContract | None = None
+
+    def iter_hierarchy(
+        self, _visited: set[int] | None = None
+    ) -> list[ParsedContract]:
+        """Recursively traverses the governing contract chain from leaf (L0) to root agreement (Ln)."""
+        visited = _visited if _visited is not None else set()
+        if id(self) in visited:
+            raise ValueError(
+                f"Circular contract hierarchy detected at document '{self.file_name}'."
+            )
+        visited.add(id(self))
+
+        if self.parent_contract is None:
+            return [self]
+        return [self, *self.parent_contract.iter_hierarchy(visited)]
+
+    def resolve_hierarchical_clauses(self) -> list[ContractClause]:
+        """Recursively collects clauses across the governing hierarchy tagged with source and precedence level."""
+        chain = self.iter_hierarchy()
+        if len(chain) == 1 and not self.document_label:
+            return list(self.clauses)
+
+        resolved: list[ContractClause] = []
+        for level, node in enumerate(chain):
+            label = node.document_label or Path(node.file_name).stem
+            for c in node.clauses:
+                resolved.append(
+                    replace(
+                        c,
+                        source_document=label,
+                        precedence_level=level,
+                    )
+                )
+        return resolved
+
+    def compile_hierarchical_text(self) -> str:
+        """Compiles full normalized contract text across all levels of the recursive hierarchy."""
+        chain = self.iter_hierarchy()
+        if len(chain) == 1:
+            return self.raw_text
+
+        sections: list[str] = []
+        for level, node in enumerate(chain):
+            label = node.document_label or Path(node.file_name).stem
+            role_desc = (
+                "PRIMARY / HIGHEST PRECEDENCE"
+                if level == 0
+                else (
+                    "BASE MASTER AGREEMENT"
+                    if level == len(chain) - 1
+                    else "INTERMEDIATE GOVERNING AGREEMENT"
+                )
+            )
+            sections.append(
+                f"=== [LEVEL {level} ({role_desc}): {label}] ===\n{node.raw_text}"
+            )
+        return "\n\n".join(sections)
 
 
 class DocumentParser:
@@ -68,7 +139,9 @@ class DocumentParser:
         return max(1, int(words * 1.33)) if words else 0
 
     @classmethod
-    def _extract_cross_references(cls, text: str, own_clause_id: str) -> list[str]:
+    def _extract_cross_references(
+        cls, text: str, own_clause_id: str, is_amendment_clause: bool = False
+    ) -> list[str]:
         """Extracts cross-referenced section or clause numbers mentioned in text."""
         own_num = re.sub(
             r"^(?:Section|Article|Clause)\s+", "", own_clause_id, flags=re.IGNORECASE
@@ -76,11 +149,11 @@ class DocumentParser:
         refs: list[str] = []
         for match in cls._CROSS_REF_RE.findall(text):
             ref_num = match.strip()
+            # Allow same section number if this clause explicitly amends/modifies a parent document's section
             if (
-                ref_num != own_num
-                and not own_num.startswith(f"{ref_num}.")
-                and ref_num not in refs
-            ):
+                is_amendment_clause
+                or (ref_num != own_num and not own_num.startswith(f"{ref_num}."))
+            ) and ref_num not in refs:
                 refs.append(ref_num)
         return refs
 
@@ -135,7 +208,12 @@ class DocumentParser:
 
         return chunks
 
-    def chunk_clauses(self, normalized_text: str) -> list[ContractClause]:
+    def chunk_clauses(
+        self,
+        normalized_text: str,
+        source_document: str = "",
+        precedence_level: int = 0,
+    ) -> list[ContractClause]:
         """Segments normalized contract text into hierarchical, clause-bounded chunks."""
         if not normalized_text.strip():
             return []
@@ -222,6 +300,13 @@ class DocumentParser:
         clauses: list[ContractClause] = []
         for clause_id, sec_heading, clause_title, body_parts in raw_clauses:
             full_body = "\n".join(body_parts).strip()
+            is_amendment = bool(
+                re.search(
+                    r"\b(?:notwithstanding|supersedes?|amend(?:s|ed)?|replace(?:s|d)?|modif(?:ies|ied))\b",
+                    full_body,
+                    re.IGNORECASE,
+                )
+            )
             sub_chunks = self._split_oversized_text(full_body)
             for idx, chunk_text in enumerate(sub_chunks):
                 part_id = (
@@ -237,8 +322,10 @@ class DocumentParser:
                         text=chunk_text,
                         token_estimate=self._estimate_tokens(chunk_text),
                         referenced_sections=self._extract_cross_references(
-                            chunk_text, clause_id
+                            chunk_text, clause_id, is_amendment_clause=is_amendment
                         ),
+                        source_document=source_document,
+                        precedence_level=precedence_level,
                     )
                 )
 
@@ -277,12 +364,17 @@ class DocumentParser:
         raw_text: str,
         file_name: str = "inline_contract.md",
         file_type: str = ".md",
+        document_label: str = "",
+        parent_contract: ParsedContract | None = None,
     ) -> ParsedContract:
-        """Normalizes and chunks raw contract text directly into a ParsedContract object."""
+        """Normalizes and chunks raw contract text directly into a ParsedContract node."""
         normalized_text = raw_text.replace("\r\n", "\n").strip()
         detected_sections = self._extract_sections(normalized_text)
         token_estimate = self._estimate_tokens(normalized_text)
-        clauses = self.chunk_clauses(normalized_text)
+        clauses = self.chunk_clauses(
+            normalized_text,
+            source_document=document_label,
+        )
 
         return ParsedContract(
             raw_text=normalized_text,
@@ -291,17 +383,17 @@ class DocumentParser:
             detected_sections=detected_sections,
             estimated_tokens=token_estimate,
             clauses=clauses,
+            document_label=document_label,
+            parent_contract=parent_contract,
         )
 
-    def parse(self, file_path: str | Path) -> ParsedContract:
-        """Parses a contract file into a normalized and clause-chunked ParsedContract object.
-
-        Args:
-            file_path: Path to the target contract (.md, .txt, .docx).
-
-        Returns:
-            ParsedContract containing normalized text, structural metadata, and clause chunks.
-        """
+    def parse(
+        self,
+        file_path: str | Path,
+        document_label: str = "",
+        parent_contract: ParsedContract | None = None,
+    ) -> ParsedContract:
+        """Parses a contract file into a normalized and clause-chunked ParsedContract object."""
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"Contract file not found at: {path}")
@@ -323,4 +415,61 @@ class DocumentParser:
             raw_text=raw_text,
             file_name=path.name,
             file_type=ext,
+            document_label=document_label,
+            parent_contract=parent_contract,
+        )
+
+    def parse_hierarchy(
+        self,
+        contract_paths: Sequence[str | Path],
+        labels: Sequence[str] | None = None,
+    ) -> ParsedContract:
+        """Recursively parses a chain of contracts ordered from leaf (L0, e.g. Addendum) to root (Ln, e.g. MSA)."""
+        if not contract_paths:
+            raise ValueError(
+                "At least one contract path must be provided to parse_hierarchy."
+            )
+
+        resolved_labels = (
+            list(labels)
+            if labels is not None
+            else [Path(p).stem for p in contract_paths]
+        )
+        if len(resolved_labels) != len(contract_paths):
+            raise ValueError("Length of labels must match length of contract_paths.")
+
+        parent_node: ParsedContract | None = None
+        if len(contract_paths) > 1:
+            parent_node = self.parse_hierarchy(
+                contract_paths[1:],
+                labels=resolved_labels[1:],
+            )
+
+        return self.parse(
+            file_path=contract_paths[0],
+            document_label=resolved_labels[0],
+            parent_contract=parent_node,
+        )
+
+    def parse_text_hierarchy(
+        self,
+        documents: Sequence[tuple[str, str]],
+    ) -> ParsedContract:
+        """Recursively parses an in-memory sequence of (document_label, raw_text) pairs from L0 to Ln."""
+        if not documents:
+            raise ValueError(
+                "At least one (document_label, raw_text) pair must be provided."
+            )
+
+        label, raw_text = documents[0]
+        parent_node: ParsedContract | None = None
+        if len(documents) > 1:
+            parent_node = self.parse_text_hierarchy(documents[1:])
+
+        return self.parse_text(
+            raw_text=raw_text,
+            file_name=f"{label}.md",
+            file_type=".md",
+            document_label=label,
+            parent_contract=parent_node,
         )
