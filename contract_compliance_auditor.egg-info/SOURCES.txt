@@ -6,6 +6,7 @@ contract_compliance_auditor.egg-info/dependency_links.txt
 contract_compliance_auditor.egg-info/requires.txt
 contract_compliance_auditor.egg-info/top_level.txt
 src/__init__.py
+src/run_audit.py
 src/audit/__init__.py
 src/audit/client.py
 src/audit/engine.py
@@ -14,6 +15,9 @@ src/formatting/__init__.py
 src/formatting/reporter.py
 src/parsing/__init__.py
 src/parsing/document_parser.py
+src/retrieval/__init__.py
+src/retrieval/hybrid_search.py
 tests/test_audit_engine.py
+tests/test_hybrid_search.py
 tests/test_parser.py
 tests/test_schemas.py

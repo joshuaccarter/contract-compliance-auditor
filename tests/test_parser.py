@@ -1,14 +1,15 @@
-"""Unit tests for the contract document parser."""
+"""Unit tests for the contract document parser and structural clause chunker."""
 
 from pathlib import Path
 
 import pytest
+from docx import Document
 
-from src.parsing.document_parser import DocumentParser, ParsedContract
+from src.parsing.document_parser import ContractClause, DocumentParser, ParsedContract
 
 
 def test_parser_markdown_normalization():
-    """Verifies parsing and section extraction on markdown contracts."""
+    """Verifies parsing, section extraction, and clause chunking on markdown contracts."""
     contract_file = Path("data/raw_contracts/generic_tech_vendor_contract.md")
     assert contract_file.exists(), "Test contract fixture missing"
 
@@ -20,11 +21,86 @@ def test_parser_markdown_normalization():
     assert result.file_type == ".md"
     assert result.estimated_tokens > 100
     assert len(result.detected_sections) >= 4
+    assert len(result.clauses) >= 10
 
     # Verify key sections were detected by heading heuristics
     joined_sections = " ".join(result.detected_sections).lower()
     assert "fees" in joined_sections or "invoicing" in joined_sections
     assert "term" in joined_sections or "renewals" in joined_sections
+
+
+def test_parser_clause_chunking_and_cross_references():
+    """Verifies that numbered sub-clauses, headings, and cross-references are extracted accurately."""
+    contract_file = Path("data/raw_contracts/generic_tech_vendor_contract.md")
+    parser = DocumentParser()
+    parsed = parser.parse(contract_file)
+
+    clauses_by_id = {c.clause_id: c for c in parsed.clauses}
+
+    assert "PREAMBLE" in clauses_by_id
+    assert "Section 3.2" in clauses_by_id
+    assert "Section 5.1" in clauses_by_id
+    assert "Section 8.1" in clauses_by_id
+    assert "Section 11.2" in clauses_by_id
+    assert "Section 14.1" in clauses_by_id
+
+    # Check parent section heading association and clause title
+    sec_3_2 = clauses_by_id["Section 3.2"]
+    assert isinstance(sec_3_2, ContractClause)
+    assert "Section 3" in sec_3_2.section_heading
+    assert sec_3_2.clause_title == "Invoicing Schedule"
+    assert "thirty (30) calendar days" in sec_3_2.text
+
+    # Check cross-reference detection in Section 11.2 ("UNDER SECTION 9")
+    sec_11_2 = clauses_by_id["Section 11.2"]
+    assert "9" in sec_11_2.referenced_sections
+
+
+def test_parser_oversized_clause_splitting():
+    """Verifies that long clauses exceeding max_clause_chars are split with sentence overlap."""
+    long_clause = (
+        "## Section 4: Data Security\n"
+        "4.1 Security Controls. "
+        + " ".join(
+            f"Sentence number {i} establishes mandatory encryption and audit logging controls."
+            for i in range(1, 25)
+        )
+    )
+    parser = DocumentParser(max_clause_chars=300, overlap_chars=80)
+    parsed = parser.parse_text(long_clause)
+
+    part_ids = [c.clause_id for c in parsed.clauses]
+    assert len(parsed.clauses) >= 4
+    assert part_ids[0] == "Section 4.1 (Part 1)"
+    assert part_ids[1] == "Section 4.1 (Part 2)"
+    # Verify sentence overlap is preserved across consecutive parts
+    assert parsed.clauses[0].text.split(".")[-2].strip() in parsed.clauses[1].text
+
+
+def test_parser_docx_reading_order_preservation(tmp_path):
+    """Verifies that inline tables in DOCX files remain in reading order between paragraphs."""
+    docx_path = tmp_path / "sample_contract.docx"
+    doc = Document()
+    doc.add_heading("Section 8: Service Levels", level=2)
+    doc.add_paragraph("8.1 Uptime Commitment. Vendor guarantees 99.9% availability.")
+    table = doc.add_table(rows=2, cols=2)
+    table.rows[0].cells[0].text = "Availability Tier"
+    table.rows[0].cells[1].text = "Service Credit"
+    table.rows[1].cells[0].text = "< 99.9%"
+    table.rows[1].cells[1].text = "10% monthly credit"
+    doc.add_heading("Section 9: Confidentiality", level=2)
+    doc.add_paragraph("9.1 Obligations. Both parties shall protect confidential data.")
+    doc.save(str(docx_path))
+
+    parser = DocumentParser()
+    parsed = parser.parse(docx_path)
+
+    clauses_by_id = {c.clause_id: c for c in parsed.clauses}
+    assert "Section 8.1" in clauses_by_id
+    assert "Section 9.1" in clauses_by_id
+    # The SLA credit table must remain attached to Section 8.1 rather than pushed after Section 9.1
+    assert "10% monthly credit" in clauses_by_id["Section 8.1"].text
+    assert "10% monthly credit" not in clauses_by_id["Section 9.1"].text
 
 
 def test_parser_unsupported_format(tmp_path):

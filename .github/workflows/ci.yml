@@ -28,6 +28,9 @@ jobs:
       - name: Run Ruff Linter
         run: uv run ruff check .
 
+      - name: Run Static Type Checker (Mypy)
+        run: uv run mypy src tests
+
       - name: Run Test Suite (Offline / Mocked)
         run: |
-          uv run pytest tests/test_parser.py tests/test_schemas.py tests/test_audit_engine.py -k "not test_live_gemini" -v
+          uv run pytest tests/ -k "not test_live_gemini" -v

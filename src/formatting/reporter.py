@@ -5,7 +5,25 @@ from pathlib import Path
 from docx import Document
 from docx.shared import Pt, RGBColor
 
-from src.audit.schemas import ComplianceStatus, ContractAuditReport
+from src.audit.schemas import (
+    ComplianceStatus,
+    ConfidenceLevel,
+    ContractAuditReport,
+)
+
+
+def _clean_md_cell(value: str) -> str:
+    """Sanitizes pipe characters and newlines so Markdown table rows never break."""
+    return " ".join(value.replace("|", "/").splitlines()).strip()
+
+
+def _format_confidence_badge(confidence: ConfidenceLevel) -> str:
+    """Returns a visual badge for the confidence level."""
+    if confidence == ConfidenceLevel.HIGH:
+        return "🟢 HIGH"
+    if confidence == ConfidenceLevel.MEDIUM:
+        return "🟡 MEDIUM"
+    return "🔴 LOW"
 
 
 def render_compliance_markdown(
@@ -22,18 +40,23 @@ def render_compliance_markdown(
             "✅ MET"
             if r.status == ComplianceStatus.MET
             else (
-                "⚠️ DEVIATION" if r.status == ComplianceStatus.DEVIATION else "❌ SILENT"
+                "⚠️ DEVIATION"
+                if r.status == ComplianceStatus.DEVIATION
+                else "❌ SILENT"
             )
         )
-        cleaned_term = r.identified_contract_term.replace("|", "/")
-        cleaned_cite = r.exact_citation.replace("|", "/")
+        conf_badge = _format_confidence_badge(r.confidence)
+        cleaned_std = _clean_md_cell(r.policy_standard)
+        cleaned_term = _clean_md_cell(r.identified_contract_term)
+        cleaned_cite = _clean_md_cell(r.exact_citation)
 
         table_rows.append(
-            f"| **{r.item_id}** | {r.item_name} | {r.policy_standard} | "
-            f"{cleaned_term} | {badge} | {cleaned_cite} |"
+            f"| **{r.item_id}** | {r.item_name} | {cleaned_std} | "
+            f"{cleaned_term} | {badge} (`{r.alignment_degree.value}`) | {conf_badge} | {cleaned_cite} |"
         )
 
     rows_text = "\n".join(table_rows)
+    total = max(1, report.total_items_audited)
 
     content = f"""# 📋 Vendor Contract Intake & Compliance Assessment
 
@@ -48,16 +71,17 @@ def render_compliance_markdown(
 | Metric | Count | Percentage |
 | :--- | :--- | :--- |
 | **Total Checklist Items** | {report.total_items_audited} | 100% |
-| **Fully Compliant (MET)** | {report.compliant_count} | {(report.compliant_count / report.total_items_audited):.1%} |
-| **Policy Deviations (DEVIATION)** | {report.deviation_count} | {(report.deviation_count / report.total_items_audited):.1%} |
-| **Missing / Unaddressed (SILENT)** | {report.silent_count} | {(report.silent_count / report.total_items_audited):.1%} |
+| **Fully Compliant (MET)** | {report.compliant_count} | {(report.compliant_count / total):.1%} |
+| **Policy Deviations (DEVIATION)** | {report.deviation_count} | {(report.deviation_count / total):.1%} |
+| **Missing / Unaddressed (SILENT)** | {report.silent_count} | {(report.silent_count / total):.1%} |
+| **Confidence: HIGH / MEDIUM / LOW** | {report.high_confidence_count} / {report.medium_confidence_count} / {report.low_confidence_count} | {(report.high_confidence_count / total):.0%} High |
 
 ---
 
 ### Itemized Audit Review Matrix
 
-| Item # | Focus Area | Policy Baseline Standard | Identified Vendor Term | Audit Verdict | Verbatim Citation / Section |
-| :--- | :--- | :--- | :--- | :--- | :--- |
+| Item # | Focus Area | Policy Baseline Standard | Identified Vendor Term | Audit Verdict & Alignment | Confidence | Verbatim Citation / Section |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 {rows_text}
 
 ---
@@ -73,11 +97,14 @@ def render_compliance_markdown(
     if deviations:
         for d in deviations:
             status_text = (
-                "Policy Deviation"
+                f"Policy Deviation — {d.alignment_degree.value}"
                 if d.status == ComplianceStatus.DEVIATION
                 else "Clause Missing (Silent)"
             )
-            content += f"\n* **[{d.item_id}] {d.item_name}** ({status_text}):\n"
+            content += (
+                f"\n* **[{d.item_id}] {d.item_name}** "
+                f"({status_text} | Confidence: `{d.confidence.value}`):\n"
+            )
             content += f"  * *Contract Term:* {d.identified_contract_term}\n"
             content += f"  * *Required Standard:* {d.policy_standard}\n"
             if d.deviation_analysis:
@@ -102,7 +129,9 @@ def render_compliance_docx(
     doc = Document()
 
     # Document Header
-    title = doc.add_heading("Vendor Contract Intake & Compliance Assessment", level=0)
+    title = doc.add_heading(
+        "Vendor Contract Intake & Compliance Assessment", level=0
+    )
     title.runs[0].font.size = Pt(18)
 
     meta_p = doc.add_paragraph()
@@ -118,6 +147,8 @@ def render_compliance_docx(
     else:
         risk_run.font.color.rgb = RGBColor(0, 120, 0)
 
+    total = max(1, report.total_items_audited)
+
     # Executive Scorecard Table
     doc.add_heading("Executive Compliance Scorecard", level=2)
     summary_table = doc.add_table(rows=1, cols=3)
@@ -130,17 +161,22 @@ def render_compliance_docx(
         (
             "Fully Compliant (MET)",
             str(report.compliant_count),
-            f"{(report.compliant_count / report.total_items_audited):.1%}",
+            f"{(report.compliant_count / total):.1%}",
         ),
         (
             "Policy Deviations (DEVIATION)",
             str(report.deviation_count),
-            f"{(report.deviation_count / report.total_items_audited):.1%}",
+            f"{(report.deviation_count / total):.1%}",
         ),
         (
             "Missing / Unaddressed (SILENT)",
             str(report.silent_count),
-            f"{(report.silent_count / report.total_items_audited):.1%}",
+            f"{(report.silent_count / total):.1%}",
+        ),
+        (
+            "Confidence (HIGH / MEDIUM / LOW)",
+            f"{report.high_confidence_count} / {report.medium_confidence_count} / {report.low_confidence_count}",
+            f"{(report.high_confidence_count / total):.0%} High",
         ),
     ]
     for metric, count, pct in stats:
@@ -149,22 +185,24 @@ def render_compliance_docx(
 
     # Detailed Audit Review Table
     doc.add_heading("Detailed Audit Review Matrix", level=2)
-    detail_table = doc.add_table(rows=1, cols=5)
+    detail_table = doc.add_table(rows=1, cols=6)
     detail_table.style = "Table Grid"
     hdr2 = detail_table.rows[0].cells
     hdr2[0].text = "ID"
     hdr2[1].text = "Focus Area"
     hdr2[2].text = "Identified Term"
-    hdr2[3].text = "Verdict"
-    hdr2[4].text = "Citation / Excerpt"
+    hdr2[3].text = "Verdict & Alignment"
+    hdr2[4].text = "Confidence"
+    hdr2[5].text = "Citation / Excerpt"
 
     for r in report.results:
         row = detail_table.add_row().cells
         row[0].text = r.item_id
         row[1].text = r.item_name
         row[2].text = r.identified_contract_term
-        row[3].text = r.status.value
-        row[4].text = r.exact_citation
+        row[3].text = f"{r.status.value} ({r.alignment_degree.value})"
+        row[4].text = r.confidence.value
+        row[5].text = r.exact_citation
 
     # Exposure Items
     doc.add_heading("Actionable Findings & Deviations", level=2)
@@ -176,12 +214,14 @@ def render_compliance_docx(
     if deviations:
         for d in deviations:
             tag = (
-                "Deviation"
+                f"Deviation: {d.alignment_degree.value}"
                 if d.status == ComplianceStatus.DEVIATION
                 else "Missing / Silent"
             )
             p = doc.add_paragraph(style="List Bullet")
-            p.add_run(f"[{d.item_id}] {d.item_name} ({tag}): ").bold = True
+            p.add_run(
+                f"[{d.item_id}] {d.item_name} ({tag} | Confidence: {d.confidence.value}): "
+            ).bold = True
             p.add_run(
                 f"Required: {d.policy_standard}. Found: {d.identified_contract_term}. "
             )
@@ -192,5 +232,5 @@ def render_compliance_docx(
             "No critical deviations found. Terms align with standard policy."
         )
 
-    doc.save(dest)
+    doc.save(str(dest))
     return dest

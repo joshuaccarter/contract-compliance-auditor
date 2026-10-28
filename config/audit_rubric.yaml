@@ -3,7 +3,14 @@ version: "2026.1"
 
 engine:
   model_name: "gemini-flash-latest"
+  embedding_model: "gemini-embedding-001"
   temperature: 0.0
+  retrieval:
+    top_k: 3
+    dense_weight: 0.5
+    sparse_weight: 0.5
+    rrf_k: 60
+    magic_phrase_boost: 2.5
 
 rubric:
   - id: "REQ-01"
@@ -13,6 +20,20 @@ rubric:
     target_value: ">= 99.9% availability commitment (commercially reasonable efforts acceptable)"
     acceptable_fallback: ">= 99.5% with financial credits"
     criticality: "HIGH"
+    keywords:
+      - "uptime"
+      - "availability"
+      - "99.9%"
+      - "99.5%"
+      - "sla"
+      - "monthly"
+      - "scheduled maintenance"
+    magic_phrases:
+      - "system availability"
+      - "commercially reasonable efforts"
+      - "ninety-nine and nine-tenths percent"
+      - "99.9%"
+      - "calendar month"
 
   - id: "REQ-02"
     name: "SLA Service Credits"
@@ -21,6 +42,22 @@ rubric:
     target_value: ">= 10% monthly credit per 0.5% outage"
     acceptable_fallback: "Escalating fee credit schedule"
     criticality: "HIGH"
+    keywords:
+      - "credit"
+      - "credits"
+      - "remedy"
+      - "outage"
+      - "downtime"
+      - "refund"
+      - "offset"
+      - "10%"
+    magic_phrases:
+      - "service credit"
+      - "service credits"
+      - "sole and exclusive remedy"
+      - "fee credit"
+      - "credit schedule"
+      - "financial credit"
 
   - id: "REQ-03"
     name: "Auto-Renewal Notice Window"
@@ -29,6 +66,20 @@ rubric:
     target_value: ">= 60 days prior notice"
     acceptable_fallback: "45-60 days prior notice"
     criticality: "MEDIUM"
+    keywords:
+      - "renew"
+      - "renewal"
+      - "auto-renewal"
+      - "notice"
+      - "expiration"
+      - "initial term"
+      - "renewal term"
+    magic_phrases:
+      - "automatically renew"
+      - "written notice of non-renewal"
+      - "prior to the expiration"
+      - "successive twelve (12) month"
+      - "non-renewal"
 
   - id: "REQ-04"
     name: "Termination for Convenience"
@@ -37,6 +88,21 @@ rubric:
     target_value: "Permitted with <= 30 days written notice"
     acceptable_fallback: "Permitted with <= 60 days written notice, zero penalty"
     criticality: "CRITICAL"
+    keywords:
+      - "termination"
+      - "terminate"
+      - "convenience"
+      - "cause"
+      - "breach"
+      - "cure"
+      - "penalty"
+    magic_phrases:
+      - "terminate for convenience"
+      - "termination for convenience"
+      - "without cause"
+      - "at its convenience"
+      - "termination for cause"
+      - "materially breaches"
 
   - id: "REQ-05"
     name: "Termination Assistance / Transition"
@@ -45,6 +111,20 @@ rubric:
     target_value: "60 days support, no additional fee"
     acceptable_fallback: "30 days support at standard T&M rates"
     criticality: "MEDIUM"
+    keywords:
+      - "transition"
+      - "export"
+      - "migration"
+      - "handover"
+      - "offboarding"
+      - "delete"
+      - "customer data"
+    magic_phrases:
+      - "effect of termination"
+      - "transition assistance"
+      - "self-export customer data"
+      - "permanently delete"
+      - "upon termination"
 
   - id: "REQ-06"
     name: "Payment Terms"
@@ -53,6 +133,24 @@ rubric:
     target_value: "Net 60 days"
     acceptable_fallback: "Net 45 days"
     criticality: "MEDIUM"
+    keywords:
+      - "payment"
+      - "invoice"
+      - "invoiced"
+      - "invoicing"
+      - "net"
+      - "payable"
+      - "undisputed"
+      - "calendar days"
+    magic_phrases:
+      - "invoicing schedule"
+      - "undisputed fees"
+      - "invoiced annually in advance"
+      - "from the date of the invoice"
+      - "thirty (30) calendar days"
+      - "net 60"
+      - "net 45"
+      - "net 30"
 
   - id: "REQ-07"
     name: "Price Escalation Cap"
@@ -61,6 +159,21 @@ rubric:
     target_value: "<= 3% or CPI annually"
     acceptable_fallback: "<= 5% flat cap annually"
     criticality: "MEDIUM"
+    keywords:
+      - "increase"
+      - "escalation"
+      - "cpi"
+      - "cap"
+      - "adjustment"
+      - "adjustments"
+      - "subscription fees"
+      - "7.0%"
+    magic_phrases:
+      - "fee adjustments"
+      - "increase annual subscription fees"
+      - "consumer price index"
+      - "prior written notice"
+      - "seven percent (7.0%)"
 
   - id: "REQ-08"
     name: "Mutual Indemnification"
@@ -69,14 +182,48 @@ rubric:
     target_value: "Uncapped IP infringement and data protection indemnity"
     acceptable_fallback: "Capped at 3x annual contract value"
     criticality: "CRITICAL"
+    keywords:
+      - "indemnification"
+      - "indemnify"
+      - "indemnity"
+      - "infringement"
+      - "defend"
+      - "hold harmless"
+      - "intellectual property"
+      - "third-party"
+    magic_phrases:
+      - "indemnify, defend, and hold harmless"
+      - "intellectual property infringement"
+      - "third-party claim"
+      - "mutual indemnification"
+      - "data breach"
 
   - id: "REQ-09"
     name: "Limitation of Liability Cap"
     category: "risk_and_liability"
-    description: "Aggregate mutual liability dollar threshold."
-    target_value: "1x to 2x aggregate annual fees (fees paid in preceding 12 months meets fallback regardless of consequential damage waivers)"
-    acceptable_fallback: "Fees paid in preceding 12 months"
+    description: "Aggregate liability dollar threshold ceiling."
+    target_value: "1x to 2x aggregate annual fees mutual liability threshold"
+    acceptable_fallback: "Fees paid in preceding 12 months (unilateral or mutual cap at 12 months fees satisfies fallback as MET / ALIGNED_FALLBACK regardless of consequential damage waivers)"
     criticality: "CRITICAL"
+    keywords:
+      - "liability"
+      - "limitation"
+      - "cap"
+      - "ceiling"
+      - "aggregate"
+      - "consequential"
+      - "incidental"
+      - "punitive"
+      - "preceding"
+      - "damages"
+    magic_phrases:
+      - "limitation of liability"
+      - "liability ceiling"
+      - "total aggregate liability"
+      - "fees actually paid"
+      - "twelve (12) months preceding"
+      - "consequential damages waiver"
+      - "indirect, incidental, special, consequential, or punitive damages"
 
   - id: "REQ-10"
     name: "Governing Law & Jurisdiction"
@@ -85,3 +232,19 @@ rubric:
     target_value: "State of Delaware or New York"
     acceptable_fallback: "State of Customer headquarters"
     criticality: "LOW"
+    keywords:
+      - "governing"
+      - "law"
+      - "jurisdiction"
+      - "venue"
+      - "delaware"
+      - "new york"
+      - "courts"
+      - "dispute"
+    magic_phrases:
+      - "governing law"
+      - "laws of the state of delaware"
+      - "laws of the state of new york"
+      - "personal jurisdiction"
+      - "conflict of law principles"
+      - "exclusive jurisdiction"
